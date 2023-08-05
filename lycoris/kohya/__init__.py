@@ -97,15 +97,13 @@ def create_network(multiplier, network_dim, network_alpha, vae, text_encoder, un
     return network
 
 
-def create_network_from_weights(multiplier, file, vae, text_encoder, unet, weights_sd=None, for_inference=False,
-                                network_dim=4, network_alpha=1, **kwargs):
-    if weights_sd is None:
-        if os.path.splitext(file)[1] == ".safetensors":
-            from safetensors.torch import load_file, safe_open
+def create_network_from_weights(multiplier, weights_sd, text_encoder, unet, network_dim=4, network_alpha=1, **kwargs):
+    if os.path.splitext(weights_sd)[1] == ".safetensors":
+        from safetensors.torch import load_file, safe_open
 
-            weights_sd = load_file(file)
-        else:
-            weights_sd = torch.load(file, map_location="cpu")
+        weights_sd = load_file(weights_sd)
+    else:
+        weights_sd = torch.load(weights_sd, map_location="cpu")
 
     # get dim/alpha mapping
     modules_dim = {}
