@@ -24,7 +24,7 @@ class HadaWeight(torch.autograd.Function):
         temp = grad_out * (w1a@w1b)
         grad_w2a = temp @ w2b.T
         grad_w2b = w2a.T @ temp
-        
+
         del temp
         return grad_w1a, grad_w1b, grad_w2a, grad_w2b, None
 
@@ -33,41 +33,41 @@ class HadaWeightCP(torch.autograd.Function):
     @staticmethod
     def forward(ctx, t1, w1a, w1b, t2, w2a, w2b, scale=torch.tensor(1)):
         ctx.save_for_backward(t1, w1a, w1b, t2, w2a, w2b, scale)
-        
+
         rebuild1 = torch.einsum('i j k l, j r, i p -> p r k l', t1, w1b, w1a)
         rebuild2 = torch.einsum('i j k l, j r, i p -> p r k l', t2, w2b, w2a)
-        
+
         return rebuild1*rebuild2*scale
 
     @staticmethod
     def backward(ctx, grad_out):
         (t1, w1a, w1b, t2, w2a, w2b, scale) = ctx.saved_tensors
         grad_out = grad_out * scale
-        
+
         temp = torch.einsum('i j k l, j r -> i r k l', t2, w2b)
         rebuild = torch.einsum('i j k l, i r -> r j k l', temp, w2a)
-        
+
         grad_w = rebuild*grad_out
         del rebuild
-        
+
         grad_w1a = torch.einsum('r j k l, i j k l -> r i', temp, grad_w)
         grad_temp = torch.einsum('i j k l, i r -> r j k l', grad_w, w1a.T)
         del grad_w, temp
-        
+
         grad_w1b = torch.einsum('i r k l, i j k l -> r j', t1, grad_temp)
         grad_t1 = torch.einsum('i j k l, j r -> i r k l', grad_temp, w1b.T)
         del grad_temp
-        
+
         temp = torch.einsum('i j k l, j r -> i r k l', t1, w1b)
         rebuild = torch.einsum('i j k l, i r -> r j k l', temp, w1a)
-        
+
         grad_w = rebuild*grad_out
         del rebuild
-        
+
         grad_w2a = torch.einsum('r j k l, i j k l -> r i', temp, grad_w)
         grad_temp = torch.einsum('i j k l, i r -> r j k l', grad_w, w2a.T)
         del grad_w, temp
-        
+
         grad_w2b = torch.einsum('i r k l, i j k l -> r j', t2, grad_temp)
         grad_t2 = torch.einsum('i j k l, j r -> i r k l', grad_temp, w2b.T)
         del grad_temp
@@ -88,10 +88,10 @@ class LohaModule(nn.Module):
     """
 
     def __init__(
-        self, 
-        lora_name, 
-        org_module: nn.Module, 
-        multiplier=1.0, lora_dim=4, alpha=1, 
+        self,
+        lora_name,
+        org_module: nn.Module,
+        multiplier=1.0, lora_dim=4, alpha=1,
         dropout=0., rank_dropout=0., module_dropout=0.,
         use_cp=False,
         **kwargs,
@@ -100,15 +100,15 @@ class LohaModule(nn.Module):
         super().__init__()
         self.lora_name = lora_name
         self.lora_dim = lora_dim
-        self.cp=False
-        
+        self.cp = False
+
         self.shape = org_module.weight.shape
         self.scalar = nn.Parameter(torch.tensor(0.0))
         if org_module.__class__.__name__ == 'Conv2d':
             in_dim = org_module.in_channels
             k_size = org_module.kernel_size
             out_dim = org_module.out_channels
-            self.cp = use_cp and k_size!=(1, 1)
+            self.cp = use_cp and k_size != (1, 1)
             if self.cp:
                 shape = (out_dim, in_dim, *k_size)
             else:
@@ -126,33 +126,39 @@ class LohaModule(nn.Module):
             shape = (out_dim, in_dim)
             self.op = F.linear
             self.extra_args = {}
-        
+
         if self.cp:
-            self.hada_t1 = nn.Parameter(torch.empty(lora_dim, lora_dim, shape[2], shape[3]))
-            self.hada_w1_a = nn.Parameter(torch.empty(lora_dim, shape[0])) # out_dim, 1-mode
-            self.hada_w1_b = nn.Parameter(torch.empty(lora_dim, shape[1])) # in_dim , 2-mode
-            
-            self.hada_t2 = nn.Parameter(torch.empty(lora_dim, lora_dim, shape[2], shape[3]))
-            self.hada_w2_a = nn.Parameter(torch.empty(lora_dim, shape[0])) # out_dim, 1-mode
-            self.hada_w2_b = nn.Parameter(torch.empty(lora_dim, shape[1])) # in_dim , 2-mode
+            self.hada_t1 = nn.Parameter(torch.empty(
+                lora_dim, lora_dim, shape[2], shape[3]))
+            self.hada_w1_a = nn.Parameter(torch.empty(
+                lora_dim, shape[0]))  # out_dim, 1-mode
+            self.hada_w1_b = nn.Parameter(torch.empty(
+                lora_dim, shape[1]))  # in_dim , 2-mode
+
+            self.hada_t2 = nn.Parameter(torch.empty(
+                lora_dim, lora_dim, shape[2], shape[3]))
+            self.hada_w2_a = nn.Parameter(torch.empty(
+                lora_dim, shape[0]))  # out_dim, 1-mode
+            self.hada_w2_b = nn.Parameter(torch.empty(
+                lora_dim, shape[1]))  # in_dim , 2-mode
         else:
             self.hada_w1_a = nn.Parameter(torch.empty(shape[0], lora_dim))
             self.hada_w1_b = nn.Parameter(torch.empty(lora_dim, shape[1]))
-            
+
             self.hada_w2_a = nn.Parameter(torch.empty(shape[0], lora_dim))
             self.hada_w2_b = nn.Parameter(torch.empty(lora_dim, shape[1]))
-        
+
         self.dropout = dropout
         if dropout:
             print("[WARN]LoHa/LoKr haven't implemented normal dropout yet.")
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
-        
+
         if type(alpha) == torch.Tensor:
             alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
         alpha = lora_dim if alpha is None or alpha == 0 else alpha
         self.scale = alpha / self.lora_dim
-        self.register_buffer('alpha', torch.tensor(alpha)) # 定数として扱える
+        self.register_buffer('alpha', torch.tensor(alpha))  # 定数として扱える
 
         # Need more experiments on init method
         if self.cp:
@@ -164,11 +170,11 @@ class LohaModule(nn.Module):
         torch.nn.init.normal_(self.hada_w2_a, std=0.1)
 
         self.multiplier = multiplier
-        self.org_module = [org_module] # remove in applying
+        self.org_module = [org_module]  # remove in applying
         self.grad_ckpt = False
         self.register_load_state_dict_post_hook(self.load_weight_hook)
-    
-    def load_weight_hook(self, **kwargs):
+
+    def load_weight_hook(self, args1=None, args2=None):
         self.scalar = nn.Parameter(torch.ones_like(self.scalar))
 
     def apply_to(self):
@@ -179,21 +185,22 @@ class LohaModule(nn.Module):
             weight = make_weight_cp(
                 self.hada_t1, self.hada_w1_a, self.hada_w1_b,
                 self.hada_t1, self.hada_w2_a, self.hada_w2_b,
-                scale = torch.tensor(self.scale),
+                scale=torch.tensor(self.scale),
             )
         else:
             weight = make_weight(
                 self.hada_w1_a, self.hada_w1_b,
                 self.hada_w2_a, self.hada_w2_b,
-                scale = torch.tensor(self.scale),
+                scale=torch.tensor(self.scale),
             )
         if orig_weight is not None:
             weight = weight.reshape(orig_weight.shape)
         if self.training and self.rank_dropout:
             drop = torch.rand(weight.size(0)) < self.rank_dropout
-            weight *= drop.view(-1, [1]*len(weight.shape[1:])).to(weight.device)
+            weight *= drop.view(-1, [1] *
+                                len(weight.shape[1:])).to(weight.device)
         return weight
-    
+
     def state_dict(self, *args, destination=None, prefix='', keep_vars=False):
         # TODO: Remove `args` and the parsing logic when BC allows.
         if len(args) > 0:
@@ -229,11 +236,11 @@ class LohaModule(nn.Module):
         norm = torch.clamp(orig_norm, max_norm/2)
         desired = torch.clamp(norm, max=max_norm)
         ratio = desired.cpu()/norm.cpu()
-        
+
         scaled = ratio.item() != 1.0
         if scaled:
             self.scalar *= ratio
-        
+
         return scaled, orig_norm*ratio
 
     @torch.enable_grad()
@@ -246,12 +253,12 @@ class LohaModule(nn.Module):
                     None if self.org_module[0].bias is None else self.org_module[0].bias.data
                 )
         weight = (
-            self.org_module[0].weight.data 
+            self.org_module[0].weight.data
             + self.get_weight(self.org_module[0].weight.data) * self.scalar * self.multiplier
         )
         bias = None if self.org_module[0].bias is None else self.org_module[0].bias.data
         return self.op(
-            x, 
+            x,
             weight.view(self.shape),
             bias,
             **self.extra_args

@@ -6,19 +6,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # 4, build custom backward function
-#  - 
+#  -
 
 
-def factorization(dimension: int, factor:int=-1) -> tuple[int, int]:
+def factorization(dimension: int, factor: int = -1) -> tuple[int, int]:
     '''
     return a tuple of two value of input dimension decomposed by the number closest to factor
     second value is higher or equal than first value.
-    
+
     In LoRA with Kroneckor Product, first value is a value for weight scale.
     secon value is a value for weight.
-    
+
     Becuase of non-commutative property, A⊗B ≠ B⊗A. Meaning of two matrices is slightly different.
-    
+
     examples)
     factor
         -1               2                4               8               16               ...
@@ -29,7 +29,7 @@ def factorization(dimension: int, factor:int=-1) -> tuple[int, int]:
     512 -> 16, 32   512 -> 2, 256    512 -> 4, 128   512 -> 8, 64    512 -> 16, 32
     1024 -> 32, 32  1024 -> 2, 512   1024 -> 4, 256  1024 -> 8, 128  1024 -> 16, 64
     '''
-    
+
     if factor > 0 and (dimension % factor) == 0:
         m = factor
         n = dimension // factor
@@ -38,12 +38,12 @@ def factorization(dimension: int, factor:int=-1) -> tuple[int, int]:
         factor = dimension
     m, n = 1, dimension
     length = m + n
-    while m<n:
+    while m < n:
         new_m = m + 1
-        while dimension%new_m != 0:
+        while dimension % new_m != 0:
             new_m += 1
         new_n = dimension // new_m
-        if new_m + new_n > length or new_m>factor:
+        if new_m + new_n > length or new_m > factor:
             break
         else:
             m, n = new_m, new_n
@@ -53,7 +53,8 @@ def factorization(dimension: int, factor:int=-1) -> tuple[int, int]:
 
 
 def make_weight_cp(t, wa, wb):
-    rebuild2 = torch.einsum('i j k l, i p, j r -> p r k l', t, wa, wb) # [c, d, k1, k2]
+    rebuild2 = torch.einsum('i j k l, i p, j r -> p r k l',
+                            t, wa, wb)  # [c, d, k1, k2]
     return rebuild2
 
 
@@ -62,7 +63,7 @@ def make_kron(w1, w2, scale):
         w1 = w1.unsqueeze(2).unsqueeze(2)
     w2 = w2.contiguous()
     rebuild = torch.kron(w1, w2)
-    
+
     return rebuild*scale
 
 
@@ -74,14 +75,14 @@ class LokrModule(nn.Module):
     """
 
     def __init__(
-        self, 
-        lora_name, org_module: nn.Module, 
-        multiplier=1.0, 
-        lora_dim=4, alpha=1, 
+        self,
+        lora_name, org_module: nn.Module,
+        multiplier=1.0,
+        lora_dim=4, alpha=1,
         dropout=0., rank_dropout=0., module_dropout=0.,
         use_cp=False,
-        decompose_both = False,
-        factor:int=-1, # factorization factor
+        decompose_both=False,
+        factor: int = -1,  # factorization factor
         **kwargs,
     ):
         """ if alpha == 0 or None, alpha is rank (no scaling). """
@@ -98,32 +99,42 @@ class LokrModule(nn.Module):
             in_dim = org_module.in_channels
             k_size = org_module.kernel_size
             out_dim = org_module.out_channels
-            
+
             in_m, in_n = factorization(in_dim, factor)
             out_l, out_k = factorization(out_dim, factor)
-            shape = ((out_l, out_k), (in_m, in_n), *k_size) # ((a, b), (c, d), *k_size)
-            
-            self.cp = use_cp and k_size!=(1, 1)
+            # ((a, b), (c, d), *k_size)
+            shape = ((out_l, out_k), (in_m, in_n), *k_size)
+
+            self.cp = use_cp and k_size != (1, 1)
             if decompose_both and lora_dim < max(shape[0][0], shape[1][0])/2:
-                self.lokr_w1_a = nn.Parameter(torch.empty(shape[0][0], lora_dim))
-                self.lokr_w1_b = nn.Parameter(torch.empty(lora_dim, shape[1][0]))
+                self.lokr_w1_a = nn.Parameter(
+                    torch.empty(shape[0][0], lora_dim))
+                self.lokr_w1_b = nn.Parameter(
+                    torch.empty(lora_dim, shape[1][0]))
             else:
                 self.use_w1 = True
-                self.lokr_w1 = nn.Parameter(torch.empty(shape[0][0], shape[1][0]))  # a*c, 1-mode
-            
+                self.lokr_w1 = nn.Parameter(torch.empty(
+                    shape[0][0], shape[1][0]))  # a*c, 1-mode
+
             if lora_dim >= max(shape[0][1], shape[1][1])/2:
                 self.use_w2 = True
-                self.lokr_w2 = nn.Parameter(torch.empty(shape[0][1], shape[1][1], *k_size))
+                self.lokr_w2 = nn.Parameter(torch.empty(
+                    shape[0][1], shape[1][1], *k_size))
             elif self.cp:
-                self.lokr_t2 = nn.Parameter(torch.empty(lora_dim, lora_dim, shape[2], shape[3]))
-                self.lokr_w2_a = nn.Parameter(torch.empty(lora_dim, shape[0][1])) # b, 1-mode
-                self.lokr_w2_b = nn.Parameter(torch.empty(lora_dim, shape[1][1])) # d, 2-mode
-            else: # Conv2d not cp
+                self.lokr_t2 = nn.Parameter(torch.empty(
+                    lora_dim, lora_dim, shape[2], shape[3]))
+                self.lokr_w2_a = nn.Parameter(
+                    torch.empty(lora_dim, shape[0][1]))  # b, 1-mode
+                self.lokr_w2_b = nn.Parameter(
+                    torch.empty(lora_dim, shape[1][1]))  # d, 2-mode
+            else:  # Conv2d not cp
                 # bigger part. weight and LoRA. [b, dim] x [dim, d*k1*k2]
-                self.lokr_w2_a = nn.Parameter(torch.empty(shape[0][1], lora_dim))
-                self.lokr_w2_b = nn.Parameter(torch.empty(lora_dim, shape[1][1]*shape[2]*shape[3]))
+                self.lokr_w2_a = nn.Parameter(
+                    torch.empty(shape[0][1], lora_dim))
+                self.lokr_w2_b = nn.Parameter(torch.empty(
+                    lora_dim, shape[1][1]*shape[2]*shape[3]))
                 # w1 ⊗ (w2_a x w2_b) = (a, b)⊗((c, dim)x(dim, d*k1*k2)) = (a, b)⊗(c, d*k1*k2) = (ac, bd*k1*k2)
-            
+
             self.op = F.conv2d
             self.extra_args = {
                 "stride": org_module.stride,
@@ -132,48 +143,55 @@ class LokrModule(nn.Module):
                 "groups": org_module.groups
             }
 
-        else: # Linear
+        else:  # Linear
             in_dim = org_module.in_features
             out_dim = org_module.out_features
-            
+
             in_m, in_n = factorization(in_dim, factor)
             out_l, out_k = factorization(out_dim, factor)
-            shape = ((out_l, out_k), (in_m, in_n)) # ((a, b), (c, d)), out_dim = a*c, in_dim = b*d
-            
+            # ((a, b), (c, d)), out_dim = a*c, in_dim = b*d
+            shape = ((out_l, out_k), (in_m, in_n))
+
             # smaller part. weight scale
             if decompose_both and lora_dim < max(shape[0][0], shape[1][0])/2:
-                self.lokr_w1_a = nn.Parameter(torch.empty(shape[0][0], lora_dim))
-                self.lokr_w1_b = nn.Parameter(torch.empty(lora_dim, shape[1][0]))
+                self.lokr_w1_a = nn.Parameter(
+                    torch.empty(shape[0][0], lora_dim))
+                self.lokr_w1_b = nn.Parameter(
+                    torch.empty(lora_dim, shape[1][0]))
             else:
                 self.use_w1 = True
-                self.lokr_w1 = nn.Parameter(torch.empty(shape[0][0], shape[1][0]))  # a*c, 1-mode
+                self.lokr_w1 = nn.Parameter(torch.empty(
+                    shape[0][0], shape[1][0]))  # a*c, 1-mode
 
             if lora_dim < max(shape[0][1], shape[1][1])/2:
                 # bigger part. weight and LoRA. [b, dim] x [dim, d]
-                self.lokr_w2_a = nn.Parameter(torch.empty(shape[0][1], lora_dim))
-                self.lokr_w2_b = nn.Parameter(torch.empty(lora_dim, shape[1][1]))
+                self.lokr_w2_a = nn.Parameter(
+                    torch.empty(shape[0][1], lora_dim))
+                self.lokr_w2_b = nn.Parameter(
+                    torch.empty(lora_dim, shape[1][1]))
                 # w1 ⊗ (w2_a x w2_b) = (a, b)⊗((c, dim)x(dim, d)) = (a, b)⊗(c, d) = (ac, bd)
             else:
                 self.use_w2 = True
-                self.lokr_w2 = nn.Parameter(torch.empty(shape[0][1], shape[1][1]))
+                self.lokr_w2 = nn.Parameter(
+                    torch.empty(shape[0][1], shape[1][1]))
 
             self.op = F.linear
             self.extra_args = {}
-        
+
         self.dropout = dropout
         if dropout:
             print("[WARN]LoHa/LoKr haven't implemented normal dropout yet.")
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
-        
+
         if isinstance(alpha, torch.Tensor):
             alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
         alpha = lora_dim if alpha is None or alpha == 0 else alpha
         if self.use_w2 and self.use_w1:
-            #use scale = 1
+            # use scale = 1
             alpha = lora_dim
         self.scale = alpha / self.lora_dim
-        self.register_buffer('alpha', torch.tensor(alpha)) # 定数として扱える
+        self.register_buffer('alpha', torch.tensor(alpha))  # 定数として扱える
 
         self.scalar = nn.Parameter(torch.tensor(0.0))
         if self.use_w2:
@@ -183,7 +201,7 @@ class LokrModule(nn.Module):
                 torch.nn.init.kaiming_uniform_(self.lokr_t2, a=math.sqrt(5))
             torch.nn.init.kaiming_uniform_(self.lokr_w2_a, a=math.sqrt(5))
             torch.nn.init.kaiming_uniform_(self.lokr_w2_b, a=math.sqrt(5))
-        
+
         if self.use_w1:
             torch.nn.init.kaiming_uniform_(self.lokr_w1, a=math.sqrt(5))
         else:
@@ -194,27 +212,27 @@ class LokrModule(nn.Module):
         self.org_module = [org_module]
         weight = make_kron(
             self.lokr_w1 if self.use_w1 else self.lokr_w1_a@self.lokr_w1_b,
-            (self.lokr_w2 if self.use_w2 
-             else make_weight_cp(self.lokr_t2, self.lokr_w2_a, self.lokr_w2_b) if self.cp 
+            (self.lokr_w2 if self.use_w2
+             else make_weight_cp(self.lokr_t2, self.lokr_w2_a, self.lokr_w2_b) if self.cp
              else self.lokr_w2_a@self.lokr_w2_b),
             torch.tensor(self.multiplier * self.scale)
         )
         assert torch.sum(torch.isnan(weight)) == 0, "weight is nan"
         self.register_load_state_dict_post_hook(self.load_weight_hook)
-    
-    def load_weight_hook(self, **kwargs):
+
+    def load_weight_hook(self, args1=None, args2=None):
         self.scalar = nn.Parameter(torch.ones_like(self.scalar))
 
     # Same as locon.py
     def apply_to(self):
         self.org_forward = self.org_module[0].forward
         self.org_module[0].forward = self.forward
-    
-    def get_weight(self, orig_weight = None):
+
+    def get_weight(self, orig_weight=None):
         weight = make_kron(
             self.lokr_w1 if self.use_w1 else self.lokr_w1_a@self.lokr_w1_b,
-            (self.lokr_w2 if self.use_w2 
-             else make_weight_cp(self.lokr_t2, self.lokr_w2_a, self.lokr_w2_b) if self.cp 
+            (self.lokr_w2 if self.use_w2
+             else make_weight_cp(self.lokr_t2, self.lokr_w2_a, self.lokr_w2_b) if self.cp
              else self.lokr_w2_a@self.lokr_w2_b),
             torch.tensor(self.scale)
         )
@@ -222,9 +240,10 @@ class LokrModule(nn.Module):
             weight = weight.reshape(orig_weight.shape)
         if self.training and self.rank_dropout:
             drop = torch.rand(weight.size(0)) < self.rank_dropout
-            weight *= drop.view(-1, [1]*len(weight.shape[1:])).to(weight.device)
+            weight *= drop.view(-1, [1] *
+                                len(weight.shape[1:])).to(weight.device)
         return weight
-    
+
     def state_dict(self, *args, destination=None, prefix='', keep_vars=False):
         # TODO: Remove `args` and the parsing logic when BC allows.
         if len(args) > 0:
@@ -250,7 +269,7 @@ class LokrModule(nn.Module):
         else:
             destination[f'{prefix}lokr_w1_a'] = self.lokr_w1_a * self.scalar
             destination[f'{prefix}lokr_w1_b'] = self.lokr_w1_b
-        
+
         if self.use_w2:
             destination[f'{prefix}lokr_w2'] = self.lokr_w2
         else:
@@ -266,24 +285,25 @@ class LokrModule(nn.Module):
         norm = torch.clamp(orig_norm, max_norm/2)
         desired = torch.clamp(norm, max=max_norm)
         ratio = desired.cpu()/norm.cpu()
-        
+
         scaled = ratio.item() != 1.0
         if scaled:
-            modules = (4 - self.use_w1 - self.use_w2 + (not self.use_w2 and self.cp))
+            modules = (4 - self.use_w1 - self.use_w2 +
+                       (not self.use_w2 and self.cp))
             if self.use_w1:
                 self.lokr_w1 *= ratio**(1/modules)
             else:
                 self.lokr_w1_a *= ratio**(1/modules)
                 self.lokr_w1_b *= ratio**(1/modules)
-            
+
             if self.use_w2:
                 self.lokr_w2 *= ratio**(1/modules)
             else:
                 if self.cp:
                     self.lokr_t2 *= ratio**(1/modules)
-                self.lokr_w2_a  *= ratio**(1/modules)
-                self.lokr_w2_b  *= ratio**(1/modules)
-        
+                self.lokr_w2_a *= ratio**(1/modules)
+                self.lokr_w2_b *= ratio**(1/modules)
+
         return scaled, orig_norm*ratio
 
     def forward(self, x):
@@ -295,12 +315,12 @@ class LokrModule(nn.Module):
                     None if self.org_module[0].bias is None else self.org_module[0].bias.data
                 )
         weight = (
-            self.org_module[0].weight.data 
+            self.org_module[0].weight.data
             + self.get_weight(self.org_module[0].weight.data) * self.scalar * self.multiplier
         )
         bias = None if self.org_module[0].bias is None else self.org_module[0].bias.data
         return self.op(
-            x, 
+            x,
             weight.view(self.shape),
             bias,
             **self.extra_args
