@@ -102,9 +102,17 @@ def create_network_from_weights(multiplier, weights_sd, text_encoder, unet, netw
     # get dim/alpha mapping
     modules_dim = {}
     modules_alpha = {}
+    algo = None
     for key, value in weights_sd.items():
         if "." not in key:
             continue
+        if algo is None:
+            if "lora_up" in key or "lora_down" in key:
+                algo = "lora"
+            elif "hada" in key:
+                algo = "loha"
+            elif "lokr" in key:
+                algo = "lokr"
 
         lora_name = key.split(".")[0]
         if "alpha" in key:
@@ -130,7 +138,7 @@ def create_network_from_weights(multiplier, weights_sd, text_encoder, unet, netw
     dropout = float(kwargs.get('dropout', 0.) or 0.)
     rank_dropout = float(kwargs.get("rank_dropout", 0.) or 0.)
     module_dropout = float(kwargs.get("module_dropout", 0.) or 0.)
-    algo = (kwargs.get('algo', 'lora') or 'lora').lower()
+    #algo = (kwargs.get('algo', 'lora') or 'lora').lower()
     use_cp = (not kwargs.get('disable_conv_cp', True)
               or kwargs.get('use_conv_cp', False))
     block_size = int(kwargs.get('block_size', 4) or 4)
@@ -505,7 +513,7 @@ class LycorisNetwork(torch.nn.Module):
 
         if self.weights_sd:
             # if some weights are not in state dict, it is ok because initial LoRA does nothing (lora_up is initialized by zeros)
-            info = self.load_state_dict(self.weights_sd, False)
+            self.load_state_dict(self.weights_sd, False)
             print(f"lora weights are loaded")
 
     def apply_max_norm_regularization(self, max_norm_value, device):
@@ -1076,8 +1084,8 @@ class IA3Network(torch.nn.Module):
 
         if self.weights_sd:
             # if some weights are not in state dict, it is ok because initial LoRA does nothing (lora_up is initialized by zeros)
-            info = self.load_state_dict(self.weights_sd, False)
-            print(f"weights are loaded: {info}")
+            self.load_state_dict(self.weights_sd, False)
+            #print(f"weights are loaded: {info}")
 
     def enable_gradient_checkpointing(self):
         # not supported
