@@ -28,7 +28,8 @@ def create_network(multiplier, network_dim, network_alpha, vae, text_encoder, un
     if network_dim is None:
         network_dim = 4  # default
     conv_dim = int(kwargs.get('conv_dim', network_dim) or network_dim)
-    conv_alpha = float(kwargs.get('conv_alpha', network_alpha) or network_alpha)
+    conv_alpha = float(kwargs.get(
+        'conv_alpha', network_alpha) or network_alpha)
     dropout = float(kwargs.get('dropout', 0.) or 0.)
     rank_dropout = float(kwargs.get("rank_dropout", 0.) or 0.)
     module_dropout = float(kwargs.get("module_dropout", 0.) or 0.)
@@ -98,7 +99,7 @@ def create_network(multiplier, network_dim, network_alpha, vae, text_encoder, un
 
 
 def create_network_from_weights(multiplier, weights_sd, text_encoder, unet, network_dim=4, network_alpha=1, **kwargs):
-    if os.path.splitext(weights_sd)[1] == ".safetensors":
+    if weights_sd.endswith(".safetensors"):
         from safetensors.torch import load_file, safe_open
 
         weights_sd = load_file(weights_sd)
@@ -131,7 +132,8 @@ def create_network_from_weights(multiplier, weights_sd, text_encoder, unet, netw
     if network_dim is None:
         network_dim = 4  # default
     conv_dim = int(kwargs.get('conv_dim', network_dim) or network_dim)
-    conv_alpha = float(kwargs.get('conv_alpha', network_alpha) or network_alpha)
+    conv_alpha = float(kwargs.get(
+        'conv_alpha', network_alpha) or network_alpha)
     dropout = float(kwargs.get('dropout', 0.) or 0.)
     rank_dropout = float(kwargs.get("rank_dropout", 0.) or 0.)
     module_dropout = float(kwargs.get("module_dropout", 0.) or 0.)
@@ -448,11 +450,13 @@ class LycorisNetwork(torch.nn.Module):
         self.text_encoder_loras = []
         for i, te in enumerate(text_encoders):
             self.text_encoder_loras.extend(create_modules(
-                LycorisNetwork.LORA_PREFIX_TEXT_ENCODER + (f'{i + 1}' if use_index else ''),
+                LycorisNetwork.LORA_PREFIX_TEXT_ENCODER +
+                (f'{i + 1}' if use_index else ''),
                 te,
                 LycorisNetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
             ))
-        print(f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
+        print(
+            f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
 
         self.unet_loras = create_modules(LycorisNetwork.LORA_PREFIX_UNET, unet,
                                          LycorisNetwork.UNET_TARGET_REPLACE_MODULE)
@@ -595,7 +599,8 @@ class LycorisNetwork(torch.nn.Module):
             # Precalculate model hashes to save time on indexing
             if metadata is None:
                 metadata = {}
-            model_hash, legacy_hash = precalculate_safetensors_hashes(state_dict, metadata)
+            model_hash, legacy_hash = precalculate_safetensors_hashes(
+                state_dict, metadata)
             metadata["sshs_model_hash"] = model_hash
             metadata["sshs_legacy_hash"] = legacy_hash
 
@@ -658,7 +663,8 @@ class HyperDreamNetwork(torch.nn.Module):
             print('HyperDreamBooth only support LoRA at this time')
             raise NotImplementedError
         if lora_dim * (down_dim + up_dim) > 4096:
-            print('weight elements > 4096 (dim * (down_dim + up_dim)) is not recommended!')
+            print(
+                'weight elements > 4096 (dim * (down_dim + up_dim)) is not recommended!')
 
         self.dropout = dropout
         self.rank_dropout = rank_dropout
@@ -739,17 +745,20 @@ class HyperDreamNetwork(torch.nn.Module):
         self.text_encoder_loras = []
         for i, te in enumerate(text_encoders):
             self.text_encoder_loras.extend(create_modules(
-                LycorisNetwork.LORA_PREFIX_TEXT_ENCODER + (f'{i + 1}' if use_index else ''),
+                LycorisNetwork.LORA_PREFIX_TEXT_ENCODER +
+                (f'{i + 1}' if use_index else ''),
                 te,
                 LycorisNetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
             ))
-        print(f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
+        print(
+            f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
 
         self.unet_loras = create_modules(LycorisNetwork.LORA_PREFIX_UNET, unet,
                                          LycorisNetwork.UNET_TARGET_REPLACE_MODULE)
         print(f"create LyCORIS for U-Net: {len(self.unet_loras)} modules.")
 
-        self.loras: list[LoConModule] = self.text_encoder_loras + self.unet_loras
+        self.loras: list[LoConModule] = self.text_encoder_loras + \
+            self.unet_loras
         self.img_weight_generater = ImgWeightGenerator(
             weight_dim=(down_dim + up_dim) * lora_dim,
             weight_num=len(self.unet_loras),
@@ -785,23 +794,29 @@ class HyperDreamNetwork(torch.nn.Module):
         #     assert torch.all(lora.data[0]==0)
 
     def gen_weight(self, ref_img, caption, iter=None, ensure_grad=0):
-        unet_weights = self.img_weight_generater(ref_img, iter, ensure_grad=ensure_grad)
+        unet_weights = self.img_weight_generater(
+            ref_img, iter, ensure_grad=ensure_grad)
         unet_weights = unet_weights + self.checkpoint
-        unet_weights = [i.split(self.split, dim=-1) for i in unet_weights.split(1, dim=1)]
-        text_weights = self.text_weight_generater(caption, iter, ensure_grad=ensure_grad)
+        unet_weights = [i.split(self.split, dim=-1)
+                        for i in unet_weights.split(1, dim=1)]
+        text_weights = self.text_weight_generater(
+            caption, iter, ensure_grad=ensure_grad)
         text_weights = text_weights + self.checkpoint
-        text_weights = [i.split(self.split, dim=-1) for i in text_weights.split(1, dim=1)]
+        text_weights = [i.split(self.split, dim=-1)
+                        for i in text_weights.split(1, dim=1)]
         return unet_weights, text_weights
 
     def update_reference(self, ref_img, caption, iter=None):
         # use idx for aux weight seed
         if self.gradient_ckpt and self.training:
-            ensure_grad = torch.zeros(1, device=ref_img.device, requires_grad=True)
+            ensure_grad = torch.zeros(
+                1, device=ref_img.device, requires_grad=True)
             unet_weights_list, text_weights_list = checkpoint.checkpoint(
                 self.gen_weight, ref_img, caption, iter, ensure_grad
             )
         else:
-            unet_weights_list, text_weights_list = self.gen_weight(ref_img, caption, iter)
+            unet_weights_list, text_weights_list = self.gen_weight(
+                ref_img, caption, iter)
 
         for idx, (lora, weight) in enumerate(zip(self.unet_loras, unet_weights_list)):
             assert lora.multiplier > 0, f"multiplier must be positive: {lora.multiplier}"
@@ -873,22 +888,22 @@ class HyperDreamNetwork(torch.nn.Module):
         if self.text_encoder_loras:
             all_params.append({
                 'params': (
-                        [p for p in self.text_weight_generater.decoder_model.parameters()]
-                        + [p for p in self.text_weight_generater.pos_emb_proj.parameters()]
-                        + [p for p in self.text_weight_generater.feature_proj.parameters()]
-                        + ([p for p in self.text_weight_generater.encoder_model.parameters()]
-                           if self.text_weight_generater.train_encoder else [])
+                    [p for p in self.text_weight_generater.decoder_model.parameters()]
+                    + [p for p in self.text_weight_generater.pos_emb_proj.parameters()]
+                    + [p for p in self.text_weight_generater.feature_proj.parameters()]
+                    + ([p for p in self.text_weight_generater.encoder_model.parameters()]
+                       if self.text_weight_generater.train_encoder else [])
                 ),
                 'lr': text_encoder_lr
             })
         if self.unet_loras:
             all_params.append({
                 'params': (
-                        [p for p in self.img_weight_generater.decoder_model.parameters()]
-                        + [p for p in self.img_weight_generater.pos_emb_proj.parameters()]
-                        + [p for p in self.img_weight_generater.feature_proj.parameters()]
-                        + ([p for p in self.img_weight_generater.encoder_model.parameters()]
-                           if self.img_weight_generater.train_encoder else [])
+                    [p for p in self.img_weight_generater.decoder_model.parameters()]
+                    + [p for p in self.img_weight_generater.pos_emb_proj.parameters()]
+                    + [p for p in self.img_weight_generater.feature_proj.parameters()]
+                    + ([p for p in self.img_weight_generater.encoder_model.parameters()]
+                       if self.img_weight_generater.train_encoder else [])
                 ),
                 'lr': unet_lr
             })
@@ -911,13 +926,15 @@ class HyperDreamNetwork(torch.nn.Module):
         if not self.img_weight_generater.train_encoder:
             for k in self.img_weight_generater.encoder_model.state_dict().keys():
                 state_dict.pop(f'encoder_model.{k}')
-        state_dict = {f'img_weight_generater.{i}': v for i, v in state_dict.items()}
+        state_dict = {f'img_weight_generater.{i}': v for i,
+                      v in state_dict.items()}
 
         state_dict = self.text_weight_generater.state_dict()
         if not self.text_weight_generater.train_encoder:
             for k in self.text_weight_generater.encoder_model.state_dict().keys():
                 state_dict.pop(f'encoder_model.{k}')
-        state_dict = {f'text_weight_generater.{i}': v for i, v in state_dict.items()}
+        state_dict = {f'text_weight_generater.{i}': v for i,
+                      v in state_dict.items()}
 
         if dtype is not None:
             for key in list(state_dict.keys()):
@@ -931,7 +948,8 @@ class HyperDreamNetwork(torch.nn.Module):
             # Precalculate model hashes to save time on indexing
             if metadata is None:
                 metadata = {}
-            model_hash, legacy_hash = precalculate_safetensors_hashes(state_dict, metadata)
+            model_hash, legacy_hash = precalculate_safetensors_hashes(
+                state_dict, metadata)
             metadata["sshs_model_hash"] = model_hash
             metadata["sshs_legacy_hash"] = legacy_hash
 
@@ -1003,7 +1021,8 @@ class IA3Network(torch.nn.Module):
             IA3Network.TEXT_ENCODER_TARGET_REPLACE_NAME,
             IA3Network.TRAIN_INPUT
         )
-        print(f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
+        print(
+            f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
 
         self.unet_loras = create_modules(
             IA3Network.LORA_PREFIX_UNET,
@@ -1134,7 +1153,8 @@ class IA3Network(torch.nn.Module):
             # Precalculate model hashes to save time on indexing
             if metadata is None:
                 metadata = {}
-            model_hash, legacy_hash = precalculate_safetensors_hashes(state_dict, metadata)
+            model_hash, legacy_hash = precalculate_safetensors_hashes(
+                state_dict, metadata)
             metadata["sshs_model_hash"] = model_hash
             metadata["sshs_legacy_hash"] = legacy_hash
 
