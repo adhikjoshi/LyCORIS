@@ -99,13 +99,6 @@ def create_network(multiplier, network_dim, network_alpha, vae, text_encoder, un
 
 
 def create_network_from_weights(multiplier, weights_sd, text_encoder, unet, network_dim=4, network_alpha=1, **kwargs):
-    if weights_sd.endswith(".safetensors"):
-        from safetensors.torch import load_file, safe_open
-
-        weights_sd = load_file(weights_sd)
-    else:
-        weights_sd = torch.load(weights_sd, map_location="cpu")
-
     # get dim/alpha mapping
     modules_dim = {}
     modules_alpha = {}
@@ -482,9 +475,12 @@ class LycorisNetwork(torch.nn.Module):
         else:
             self.weights_sd = torch.load(file, map_location='cpu')
 
+    def set_weights(self, weights_sd):
+        self.weights_sd = weights_sd
+
     def apply_to(self):
+        weights_has_text_encoder = weights_has_unet = False
         if self.weights_sd:
-            weights_has_text_encoder = weights_has_unet = False
             for key in self.weights_sd.keys():
                 if key.startswith(LycorisNetwork.LORA_PREFIX_TEXT_ENCODER):
                     weights_has_text_encoder = True
@@ -494,11 +490,13 @@ class LycorisNetwork(torch.nn.Module):
         if weights_has_text_encoder:
             print("enable LyCORIS for text encoder")
         else:
+            print("disable LyCORIS for text encoder")
             self.text_encoder_loras = []
 
         if weights_has_unet:
             print("enable LyCORIS for U-Net")
         else:
+            print("disable LyCORIS for U-Net")
             self.unet_loras = []
 
         for lora in self.text_encoder_loras + self.unet_loras:
