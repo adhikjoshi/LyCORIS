@@ -482,7 +482,7 @@ class LycorisNetwork(torch.nn.Module):
         else:
             self.weights_sd = torch.load(file, map_location='cpu')
 
-    def apply_to(self, text_encoder, unet, apply_text_encoder=None, apply_unet=None):
+    def apply_to(self):
         if self.weights_sd:
             weights_has_text_encoder = weights_has_unet = False
             for key in self.weights_sd.keys():
@@ -491,24 +491,12 @@ class LycorisNetwork(torch.nn.Module):
                 elif key.startswith(LycorisNetwork.LORA_PREFIX_UNET):
                     weights_has_unet = True
 
-            if apply_text_encoder is None:
-                apply_text_encoder = weights_has_text_encoder
-            else:
-                assert apply_text_encoder == weights_has_text_encoder, f"text encoder weights: {weights_has_text_encoder} but text encoder flag: {apply_text_encoder} / 重みとText Encoderのフラグが矛盾しています"
-
-            if apply_unet is None:
-                apply_unet = weights_has_unet
-            else:
-                assert apply_unet == weights_has_unet, f"u-net weights: {weights_has_unet} but u-net flag: {apply_unet} / 重みとU-Netのフラグが矛盾しています"
-        else:
-            assert apply_text_encoder is not None and apply_unet is not None, f"internal error: flag not set"
-
-        if apply_text_encoder:
+        if weights_has_text_encoder:
             print("enable LyCORIS for text encoder")
         else:
             self.text_encoder_loras = []
 
-        if apply_unet:
+        if weights_has_unet:
             print("enable LyCORIS for U-Net")
         else:
             self.unet_loras = []
@@ -520,7 +508,7 @@ class LycorisNetwork(torch.nn.Module):
         if self.weights_sd:
             # if some weights are not in state dict, it is ok because initial LoRA does nothing (lora_up is initialized by zeros)
             info = self.load_state_dict(self.weights_sd, False)
-            print(f"weights are loaded: {info}")
+            print(f"lora weights are loaded")
 
     def apply_max_norm_regularization(self, max_norm_value, device):
         key_scaled = 0
